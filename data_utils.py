@@ -6,13 +6,14 @@ import torch.utils.data
 import layers
 from utils import load_wav_to_torch, load_filepaths_and_text
 from text import text_to_sequence
-
+from fagal import durations_to_mask
 
 class TextMelLoader(torch.utils.data.Dataset):
     """
         1) loads audio,text pairs
         2) normalizes text and converts them to sequences of one-hot vectors
         3) computes mel-spectrograms from audio files.
+        4) gets pre-att  map
     """
     def __init__(self, audiopaths_and_text, hparams):
         self.audiopaths_and_text = load_filepaths_and_text(audiopaths_and_text)
@@ -26,13 +27,36 @@ class TextMelLoader(torch.utils.data.Dataset):
             hparams.mel_fmax)
         random.seed(hparams.seed)
         random.shuffle(self.audiopaths_and_text)
-
+    
+    
+    #Get mask 
+    #in_mel: (n_mel_channels, T)
+    def get_att_mask(self,in_mel,in_text_len,in_audiopath):
+        mask_fn = in_audiopath.replace(".wav","-mask.npy")
+        if os.path.isfile(mask_fn):
+            return torch.from_numpy(np.load(mask_fn))
+        
+        duration_fn = in_audiopath.replace(".wav","-dur.npy")
+        if not os.path.isfile(duration_fn):
+            raise RuntimeError(f"MFA-gen Duration file {duration_fn} does not exist!, did you forget to run MFA scripts????")
+        
+        mel_len = in_mel.shape[1]
+        durations = np.load(duration_fn)
+        computed_mask = durations_to_mask(durations,mel_len,in_text_len,in_audiopath,2.5) #TODO: Make looseness adjustable
+        np.save(mask_fn,computed_mask) # It is slow and intensive to calc a mask, so we save em for l8r
+        
+        return computed_mask
+        
+        
+    
     def get_mel_text_pair(self, audiopath_and_text):
         # separate filename and text
         audiopath, text = audiopath_and_text[0], audiopath_and_text[1]
         text = self.get_text(text)
         mel = self.get_mel(audiopath)
-        return (text, mel)
+        attn_mask = self.get_att_mask(mel.cpu().numpy(),len(text),audiopath)
+        attn_mask = torch.from_numpy(attn_mask)
+        return (text, mel, attn_mask)
 
     def get_mel(self, filename):
         if not self.load_mel_from_disk:
@@ -74,7 +98,7 @@ class TextMelCollate():
         """Collate's training batch from normalized text and mel-spectrogram
         PARAMS
         ------
-        batch: [text_normalized, mel_normalized]
+        batch: [text_normalized, mel_normalized, attn_mask]
         """
         # Right zero-pad all one-hot text sequences to max input length
         input_lengths, ids_sorted_decreasing = torch.sort(
@@ -82,6 +106,7 @@ class TextMelCollate():
             dim=0, descending=True)
         max_input_len = input_lengths[0]
 
+        
         text_padded = torch.LongTensor(len(batch), max_input_len)
         text_padded.zero_()
         for i in range(len(ids_sorted_decreasing)):
@@ -106,6 +131,22 @@ class TextMelCollate():
             mel_padded[i, :, :mel.size(1)] = mel
             gate_padded[i, mel.size(1)-1:] = 1
             output_lengths[i] = mel.size(1)
+        
+        #Get max xlen and ylen for attn masks
+        max_xlen = max(mask.shape[0] for mask in batch[2])
+        max_ylen = max(mask.shape[1] for mask in batch[2])
+        
+        mask_padded = torch.FloatTensor(len(batch), max_xlen, max_ylen)
 
-        return text_padded, input_lengths, mel_padded, gate_padded, \
+        
+        for i in range(len(ids_sorted_decreasing)):
+            mask_raw = batch[ids_sorted_decreasing[i]][2]
+            mask_padded[i,:mask_raw.shape[0], :mask_raw.shape[1]] = mask_raw
+        
+        
+        
+        
+            
+
+        return text_padded, input_lengths, mel_padded, gate_padded, mask_padded, \
             output_lengths
