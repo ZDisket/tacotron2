@@ -7,6 +7,7 @@ import layers
 from utils import load_wav_to_torch, load_filepaths_and_text
 from text import text_to_sequence
 from fagal import durations_to_mask
+import os
 
 class TextMelLoader(torch.utils.data.Dataset):
     """
@@ -34,7 +35,7 @@ class TextMelLoader(torch.utils.data.Dataset):
     def get_att_mask(self,in_mel,in_text_len,in_audiopath):
         mask_fn = in_audiopath.replace(".wav","-mask.npy")
         if os.path.isfile(mask_fn):
-            return torch.from_numpy(np.load(mask_fn))
+            return np.load(mask_fn)
         
         duration_fn = in_audiopath.replace(".wav","-dur.npy")
         if not os.path.isfile(duration_fn):
@@ -55,7 +56,7 @@ class TextMelLoader(torch.utils.data.Dataset):
         text = self.get_text(text)
         mel = self.get_mel(audiopath)
         attn_mask = self.get_att_mask(mel.cpu().numpy(),len(text),audiopath)
-        attn_mask = torch.from_numpy(attn_mask)
+        attn_mask = torch.from_numpy(attn_mask).transpose(0,1) # alignments later are the wrong way around, we transpose the masks here
         return (text, mel, attn_mask)
 
     def get_mel(self, filename):
@@ -133,8 +134,8 @@ class TextMelCollate():
             output_lengths[i] = mel.size(1)
         
         #Get max xlen and ylen for attn masks
-        max_xlen = max(mask.shape[0] for mask in batch[2])
-        max_ylen = max(mask.shape[1] for mask in batch[2])
+        max_xlen = max(x[2].shape[0] for x in batch)
+        max_ylen = max(x[2].shape[1] for x in batch)
         
         mask_padded = torch.FloatTensor(len(batch), max_xlen, max_ylen)
         mask_padded.zero_()
@@ -145,13 +146,10 @@ class TextMelCollate():
         
         for i in range(len(ids_sorted_decreasing)):
             mask_raw = batch[ids_sorted_decreasing[i]][2]
-            xlens[i] = mask_raw.shape[0]
+            xlens[i] = mask_raw.shape[0] 
             ylens[i] = mask_raw.shape[1]
             mask_padded[i,:mask_raw.shape[0], :mask_raw.shape[1]] = mask_raw
-        
-        
-        
-        
+
             
 
         return text_padded, input_lengths, mel_padded, gate_padded, mask_padded, xlens, ylens, \

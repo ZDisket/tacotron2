@@ -1,5 +1,6 @@
 from torch import nn
 from utils import make_non_pad_mask
+import torch
 
 class FALGuidedAttentionLoss(torch.nn.Module):
     """Guided attention loss function module.
@@ -37,12 +38,12 @@ class FALGuidedAttentionLoss(torch.nn.Module):
     def _reset_masks(self):
         self.guided_attn_masks = None
         self.masks = None
-    
-    
+
     def forward(self,batch_guided, y_pred):
         guided_masks, xlens, ylens = batch_guided
         _, _, _, alignments = y_pred
-        return get_loss(alignments,guided_masks,xlens,ylens)
+
+        return self.get_loss(alignments,guided_masks,xlens,ylens)
         
     
     def get_loss(self, att_ws,guided_attn_masks, xlens, ylens):
@@ -58,8 +59,14 @@ class FALGuidedAttentionLoss(torch.nn.Module):
             Tensor: Guided attention loss value.
 
         """
+        if guided_attn_masks.shape != att_ws.shape:
+          print("Attention and masks are diff sizes, skipping")
+          return 0.2
+          
         if self.masks is None:
             self.masks = self._make_masks(xlens, ylens).to(att_ws.device)
+            self.masks = self.masks.transpose(1,2) # masks is orig [y,x] now we make it [x,y]
+        
         losses = guided_attn_masks * att_ws
         loss = torch.mean(losses.masked_select(self.masks))
         if self.reset_always:

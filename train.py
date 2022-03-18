@@ -118,7 +118,7 @@ def save_checkpoint(model, optimizer, learning_rate, iteration, filepath):
                 'learning_rate': learning_rate}, filepath)
 
 
-def validate(model, criterion, valset, iteration, batch_size, n_gpus,
+def validate(model, criterion,fagal_c, valset, iteration, batch_size, n_gpus,
              collate_fn, logger, distributed_run, rank):
     """Handles all the validation scoring and printing"""
     model.eval()
@@ -130,9 +130,12 @@ def validate(model, criterion, valset, iteration, batch_size, n_gpus,
 
         val_loss = 0.0
         for i, batch in enumerate(val_loader):
-            x, y = model.parse_batch(batch)
+            x, y, mask_l = model.parse_batch(batch)
             y_pred = model(x)
             loss = criterion(y_pred, y)
+            fagal_vloss = fagal_c(mask_l,y_pred)
+            loss += fagal_vloss
+            
             if distributed_run:
                 reduced_val_loss = reduce_tensor(loss.data, n_gpus).item()
             else:
@@ -142,7 +145,7 @@ def validate(model, criterion, valset, iteration, batch_size, n_gpus,
 
     model.train()
     if rank == 0:
-        print("Validation loss {}: {:9f}  ".format(iteration, val_loss))
+        print("Validation loss {}: {:9f} FAGAL: {:9f} ".format(iteration, val_loss,fagal_vloss))
         logger.log_validation(val_loss, model, y, y_pred, iteration)
 
 
@@ -166,9 +169,9 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
     torch.cuda.manual_seed(hparams.seed)
 
     model = load_model(hparams)
-    learning_rate = hparams.learning_rate
+    learning_rate = float(hparams.learning_rate)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
-                                 weight_decay=hparams.weight_decay)
+                                 weight_decay=float(hparams.weight_decay))
 
     if hparams.fp16_run:
         from apex import amp
@@ -216,7 +219,7 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
             y_pred = model(x)
 
             loss = criterion(y_pred, y)
-            fagal_loss = FALGuidedAttentionLoss(mask_l,y_pred)
+            fagal_loss = guided_loss(mask_l,y_pred)
             loss += fagal_loss
             
             if hparams.distributed_run:
@@ -247,7 +250,7 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
                     reduced_loss, grad_norm, learning_rate, duration, iteration)
 
             if not is_overflow and (iteration % hparams.iters_per_checkpoint == 0):
-                validate(model, criterion, valset, iteration,
+                validate(model, criterion, guided_loss, valset, iteration,
                          hparams.batch_size, n_gpus, collate_fn, logger,
                          hparams.distributed_run, rank)
                 if rank == 0:
