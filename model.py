@@ -471,7 +471,7 @@ class Tacotron2(nn.Module):
         self.postnet = Postnet(hparams)
 
     def parse_batch(self, batch):
-        text_padded, input_lengths, mel_padded, gate_padded, \
+        text_padded, input_lengths, mel_padded, gate_padded, mask_padded, xlens, ylens, \
             output_lengths = batch
         text_padded = to_gpu(text_padded).long()
         input_lengths = to_gpu(input_lengths).long()
@@ -479,10 +479,13 @@ class Tacotron2(nn.Module):
         mel_padded = to_gpu(mel_padded).float()
         gate_padded = to_gpu(gate_padded).float()
         output_lengths = to_gpu(output_lengths).long()
+        mask_padded = to_gpu(mask_padded).float()
+        xlens = to_gpu(xlens).long()
+        ylens = to_gpu(ylens).long()
 
         return (
             (text_padded, input_lengths, mel_padded, max_len, output_lengths),
-            (mel_padded, gate_padded))
+            (mel_padded, gate_padded), (mask_padded, xlens, ylens))
 
     def parse_output(self, outputs, output_lengths=None):
         if self.mask_padding and output_lengths is not None:

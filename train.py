@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 
 from model import Tacotron2
 from data_utils import TextMelLoader, TextMelCollate
-from loss_function import Tacotron2Loss
+from loss_function import Tacotron2Loss, FALGuidedAttentionLoss
 from logger import Tacotron2Logger
 from config.hparams import HParam
 
@@ -179,6 +179,7 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
         model = apply_gradient_allreduce(model)
 
     criterion = Tacotron2Loss()
+    guided_loss = FALGuidedAttentionLoss()
 
     logger = prepare_directories_and_logger(
         output_directory, log_directory, rank)
@@ -211,10 +212,13 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
                 param_group['lr'] = learning_rate
 
             model.zero_grad()
-            x, y = model.parse_batch(batch)
+            x, y, mask_l = model.parse_batch(batch)
             y_pred = model(x)
 
             loss = criterion(y_pred, y)
+            fagal_loss = FALGuidedAttentionLoss(mask_l,y_pred)
+            loss += fagal_loss
+            
             if hparams.distributed_run:
                 reduced_loss = reduce_tensor(loss.data, n_gpus).item()
             else:
@@ -237,8 +241,8 @@ def train(output_directory, log_directory, checkpoint_path, warm_start, n_gpus,
 
             if not is_overflow and rank == 0:
                 duration = time.perf_counter() - start
-                print("Train loss {} {:.6f} Grad Norm {:.6f} {:.2f}s/it".format(
-                    iteration, reduced_loss, grad_norm, duration))
+                print("Train loss {} {:.6f} FAGAL Loss {:.6f} Grad Norm {:.6f} {:.2f}s/it".format(
+                    iteration, reduced_loss,fagal_loss, grad_norm, duration))
                 logger.log_training(
                     reduced_loss, grad_norm, learning_rate, duration, iteration)
 

@@ -137,10 +137,16 @@ class TextMelCollate():
         max_ylen = max(mask.shape[1] for mask in batch[2])
         
         mask_padded = torch.FloatTensor(len(batch), max_xlen, max_ylen)
+        mask_padded.zero_()
+        
+        xlens = torch.LongTensor(len(batch))
+        ylens = torch.LongTensor(len(batch))
 
         
         for i in range(len(ids_sorted_decreasing)):
             mask_raw = batch[ids_sorted_decreasing[i]][2]
+            xlens[i] = mask_raw.shape[0]
+            ylens[i] = mask_raw.shape[1]
             mask_padded[i,:mask_raw.shape[0], :mask_raw.shape[1]] = mask_raw
         
         
@@ -148,5 +154,5 @@ class TextMelCollate():
         
             
 
-        return text_padded, input_lengths, mel_padded, gate_padded, mask_padded, \
+        return text_padded, input_lengths, mel_padded, gate_padded, mask_padded, xlens, ylens, \
             output_lengths
